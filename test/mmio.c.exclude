@@ -1,0 +1,41 @@
+#define NANOPRINTF_USE_FIELD_WIDTH_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_USE_PRECISION_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_USE_LARGE_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_USE_SMALL_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_USE_FLOAT_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_USE_BINARY_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_USE_WRITEBACK_FORMAT_SPECIFIERS 0
+#define NANOPRINTF_IMPLEMENTATION
+#include "nanoprintf.h"
+
+void putc(int ch)
+{
+    *(volatile unsigned char *)0xFFF0 = (unsigned char)ch;
+}
+
+void puts(const char *str)
+{
+    while (*str)
+        putc((unsigned char)*str++);
+}
+
+int printf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char buff[1024];
+    int len = npf_vsnprintf(buff, sizeof(buff), fmt, args);
+    if (len >= 0 && len < sizeof(buff))
+    {
+        puts(buff);
+    }
+    va_end(args);
+    return len;
+}
+
+void _start(void)
+{
+    printf("Hello %s!\n", "World");
+    for (;;)
+        ;
+}
