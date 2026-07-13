@@ -6,7 +6,7 @@
 #define NANOPRINTF_USE_BINARY_FORMAT_SPECIFIERS 0
 #define NANOPRINTF_USE_WRITEBACK_FORMAT_SPECIFIERS 0
 #define NANOPRINTF_IMPLEMENTATION
-#include "nanoprintf.h"
+#include <internal/nanoprintf.h>
 
 void putc(int ch)
 {

@@ -2,6 +2,7 @@
 #include "sra32.h"
 #include "sra32ka/sra32ka.h"
 #include "sra32ka/mmio.h"
+#include "log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,8 +34,11 @@ static struct
     int disasm;              // -x, disassemble every instruction during runtime
     int elf;                 // -e, treat the rom as an ELF executable (experimental)
     int sra32ka;             // -E, enables the sra32ka extension
+    int quiet;               // -q, only log warnings and errors
     uint64_t max;            // -m, step limit (0 = unlimited)
     const char *stderr_file; // -S, redirect stderr (sra32emu logs mostly, but also errors)
+    const char **serial;     // -u/--serial, one backend spec per sra32ka serial port (repeatable)
+    int serial_count;
 } opts;
 
 /* parse a size like 4096, 0x10000, 64K, 8M or 1G */
@@ -62,10 +66,7 @@ static uint64_t parse_size(const char *str)
         break;
     }
     if (end == str || *end != '\0' || n == 0 || n > RAM_SIZE_MAX || (n & 3))
-    {
-        fprintf(stderr, "%s: invalid ram size '%s' (1..4G, multiple of 4, optional K/M/G suffix)\n", PROGRAM_NAME, str);
-        exit(EXIT_FAILURE);
-    }
+        log_fatal(NULL, "invalid ram size '%s' (1..4G, multiple of 4, optional K/M/G suffix)", str);
     return n;
 }
 
@@ -86,7 +87,7 @@ static uint32_t bus_read(cpu_t *cpu, uint32_t addr, uint32_t size)
         return value;
     }
 
-    fprintf(stderr, "[bus] read fault at 0x%08X\n", addr);
+    log_error("bus", "read fault at 0x%08X", addr);
     cpu->halted = 1;
     return 0;
 }
@@ -106,14 +107,13 @@ static void bus_write(cpu_t *cpu, uint32_t addr, uint32_t value, uint32_t size)
         return;
     }
 
-    fprintf(stderr, "[bus] write fault at 0x%08X\n", addr);
+    log_error("bus", "write fault at 0x%08X", addr);
     cpu->halted = 1;
 }
 
 static void cpu_trap(cpu_t *cpu, uint32_t reason, uint32_t word)
 {
-    fprintf(stderr, "[trap] reason=%u word=0x%08X pc=0x%08X\n",
-            reason, word, cpu->pc - 4);
+    log_error("trap", "reason=%u word=0x%08X pc=0x%08X", reason, word, cpu->pc - 4);
     cpu->halted = 1;
 }
 
@@ -232,7 +232,7 @@ static void print_instr(cpu_t *cpu)
     if (cpu->halted)
         return;
     disasm(cpu, word, buf, sizeof(buf));
-    printf("0x%08X: %08X  %s\n", cpu->pc, word, buf);
+    fprintf(stderr, "0x%08X: %08X  %s\n", cpu->pc, word, buf);
 }
 
 static uint64_t run(cpu_t *cpu)
@@ -250,7 +250,7 @@ static uint64_t run(cpu_t *cpu)
 
         if (opts.step)
         {
-            printf("(step) ");
+            fprintf(stderr, "(step) ");
             fflush(stdout);
             if (!fgets(line, sizeof(line), stdin) || line[0] == 'q')
                 break;
@@ -260,7 +260,7 @@ static uint64_t run(cpu_t *cpu)
         steps++;
         if (opts.dump_step)
         {
-            printf("--- step %llu ---\n", (unsigned long long)steps);
+            fprintf(stderr, "--- step %llu ---\n", (unsigned long long)steps);
             cpu_dump(cpu);
         }
     }
@@ -288,8 +288,7 @@ static uint32_t rd32(const uint8_t *p)
 
 static void elf_die(const char *path, const char *why)
 {
-    fprintf(stderr, "%s: '%s': %s\n", PROGRAM_NAME, path, why);
-    exit(EXIT_FAILURE);
+    log_fatal("elf", "'%s': %s", path, why);
 }
 
 static uint32_t load_elf(const char *path)
@@ -300,12 +299,9 @@ static uint32_t load_elf(const char *path)
     uint32_t e_entry, e_phoff;
     uint16_t e_phentsize, e_phnum;
     int i, loaded = 0;
-    fprintf(stderr, "[elf] WARNING: the ELF loader is experimental\n");
+    log_warn("elf", "the ELF loader is experimental");
     if (!f)
-    {
-        fprintf(stderr, "%s: cannot open '%s'\n", PROGRAM_NAME, path);
-        exit(EXIT_FAILURE);
-    }
+        log_fatal("elf", "cannot open '%s'", path);
 
     fseek(f, 0, SEEK_END);
     file_size = ftell(f);
@@ -356,13 +352,13 @@ static uint32_t load_elf(const char *path)
 
         memcpy(ram + p_vaddr, file + p_offset, p_filesz);
         memset(ram + p_vaddr + p_filesz, 0, p_memsz - p_filesz); // .bss
-        fprintf(stderr, "[elf] load 0x%08X..0x%08X (%u bytes, %u from file)\n", p_vaddr, p_vaddr + p_memsz, p_memsz, p_filesz);
+        log_info("elf", "load 0x%08X..0x%08X (%u bytes, %u from file)", p_vaddr, p_vaddr + p_memsz, p_memsz, p_filesz);
         loaded++;
     }
     if (!loaded)
         elf_die(path, "no PT_LOAD segments");
 
-    fprintf(stderr, "[elf] entry = 0x%08X\n", e_entry);
+    log_info("elf", "entry = 0x%08X", e_entry);
     free(file);
     return e_entry;
 }
@@ -373,28 +369,21 @@ static size_t load_rom(const char *path)
     size_t n;
 
     if (!f)
-    {
-        fprintf(stderr, "%s: cannot open '%s'\n", PROGRAM_NAME, path);
-        exit(EXIT_FAILURE);
-    }
+        log_fatal("rom", "cannot open '%s'", path);
 
     n = fread(ram, 1, ram_size, f);
     if (fgetc(f) != EOF)
     {
-        fprintf(stderr, "%s: rom '%s' is larger than RAM (%llu bytes)\n", PROGRAM_NAME, path, (unsigned long long)ram_size);
         fclose(f);
-        exit(EXIT_FAILURE);
+        log_fatal("rom", "'%s' is larger than RAM (%llu bytes)", path, (unsigned long long)ram_size);
     }
     fclose(f);
 
     if (n == 0)
-    {
-        fprintf(stderr, "%s: rom '%s' is empty\n", PROGRAM_NAME, path);
-        exit(EXIT_FAILURE);
-    }
+        log_fatal("rom", "'%s' is empty", path);
 
     if (n >= 4 && ram[0] == 0x7F && ram[1] == 'E' && ram[2] == 'L' && ram[3] == 'F')
-        fprintf(stderr, "%s: warning: '%s' looks like an ELF file, did you mean --elf?\n", PROGRAM_NAME, path);
+        log_warn("rom", "'%s' looks like an ELF file, did you mean --elf?", path);
     return n;
 }
 
@@ -422,6 +411,11 @@ static void usage(int status)
     fprintf(out, "  -m, --max=N             stop after N steps (default: unlimited)\n");
     fprintf(out, "  -r, --ram-size=N        set ram size, K/M/G suffixes allowed (default: 64K)\n");
     fprintf(out, "  -S, --stderr=file       redirects stderr (mostly sra32emu logs) to file\n");
+    fprintf(out, "  -u, --serial=BACKEND    map a sra32ka serial port to BACKEND (repeatable, one\n");
+    fprintf(out, "                          per port, serial0 first): 'stdio', 'file:path', or\n");
+    fprintf(out, "                          'null'. 'stdio' and a given file may each back only\n");
+    fprintf(out, "                          one port. default: none (-E alone brings up no ports)\n");
+    fprintf(out, "  -q, --quiet             only log warnings and errors\n");
     fprintf(out, "  -h, --help              display this help and exit\n");
     fprintf(out, "  -V, --version           output version information and exit\n");
     exit(status);
@@ -452,11 +446,13 @@ int main(int argc, char **argv)
         {"max", required_argument, NULL, 'm'},
         {"ram-size", required_argument, NULL, 'r'},
         {"stderr", required_argument, NULL, 'S'},
+        {"serial", required_argument, NULL, 'u'},
+        {"quiet", no_argument, NULL, 'q'},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}};
 
-    while ((c = getopt_long(argc, argv, "sxedEDm:r:S:hV", long_opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "sxedEDm:r:S:u:qhV", long_opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -487,6 +483,18 @@ int main(int argc, char **argv)
         case 'S':
             opts.stderr_file = optarg;
             break;
+        case 'u':
+        {
+            const char **grown = realloc(opts.serial, (size_t)(opts.serial_count + 1) * sizeof(*grown));
+            if (!grown)
+                log_fatal(NULL, "out of memory while parsing --serial");
+            grown[opts.serial_count++] = optarg;
+            opts.serial = grown;
+            break;
+        }
+        case 'q':
+            opts.quiet = 1;
+            break;
         case 'h':
             usage(EXIT_SUCCESS);
             break;
@@ -503,15 +511,15 @@ int main(int argc, char **argv)
 
     if (opts.stderr_file)
         redirect_stderr(opts.stderr_file);
+    if (opts.quiet)
+        log_set_level(LOG_WARN);
+    if (opts.serial_count && !opts.sra32ka)
+        log_warn(NULL, "--serial given without -E/--enable-sra32ka, ignoring");
 
     ram = calloc(1, ram_size);
     atexit(cleanup);
     if (!ram)
-    {
-        fprintf(stderr, "%s: failed to allocate %llu bytes of ram\n",
-                PROGRAM_NAME, (unsigned long long)ram_size);
-        return EXIT_FAILURE;
-    }
+        log_fatal(NULL, "failed to allocate %llu bytes of ram", (unsigned long long)ram_size);
 
     entry = 0;
     rom_size = 0;
@@ -524,17 +532,15 @@ int main(int argc, char **argv)
     sra32_reset(&cpu, entry);
 
     if (opts.sra32ka)
-    {
-        sra32ka_init(&cpu);
-    }
+        sra32ka_init(&cpu, opts.serial, opts.serial_count);
 
     steps = run(&cpu);
 
     if (opts.elf)
-        fprintf(stderr, "[sra32emu] halted after %llu steps\n", (unsigned long long)steps);
+        log_info(NULL, "halted after %llu steps", (unsigned long long)steps);
     else
-        fprintf(stderr, "[sra32emu] halted after %llu steps (rom: %zu bytes)\n",
-                (unsigned long long)steps, rom_size);
+        log_info(NULL, "halted after %llu steps (rom: %zu bytes)",
+                 (unsigned long long)steps, rom_size);
     if (opts.dump_end)
         cpu_dump(&cpu);
 
