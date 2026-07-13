@@ -27,13 +27,14 @@ static void cleanup(void)
 /* cli options */
 static struct
 {
-    int step;      // -s, interactive single stepping
-    int dump_step; // -d, dump cpu state after every step
-    int dump_end;  // -D, dump cpu state when execution finishes
-    int disasm;    // -x, disassemble every instruction during runtime
-    int elf;       // -e, treat the rom as an ELF executable (experimental)
-    int sra32ka;   // -E, enables the sra32ka extension
-    uint64_t max;  // -m, step limit (0 = unlimited)
+    int step;                // -s, interactive single stepping
+    int dump_step;           // -d, dump cpu state after every step
+    int dump_end;            // -D, dump cpu state when execution finishes
+    int disasm;              // -x, disassemble every instruction during runtime
+    int elf;                 // -e, treat the rom as an ELF executable (experimental)
+    int sra32ka;             // -E, enables the sra32ka extension
+    uint64_t max;            // -m, step limit (0 = unlimited)
+    const char *stderr_file; // -S, redirect stderr (sra32emu logs mostly, but also errors)
 } opts;
 
 /* parse a size like 4096, 0x10000, 64K, 8M or 1G */
@@ -397,6 +398,16 @@ static size_t load_rom(const char *path)
     return n;
 }
 
+static void redirect_stderr(const char *path)
+{
+    FILE *f = freopen(path, "w", stderr);
+    if (!f)
+    {
+        perror("freopen");
+        exit(EXIT_FAILURE);
+    }
+}
+
 static void usage(int status)
 {
     FILE *out = status == EXIT_SUCCESS ? stdout : stderr;
@@ -410,6 +421,7 @@ static void usage(int status)
     fprintf(out, "  -E, --enable-sra32ka    enables the sra32ka extension\n");
     fprintf(out, "  -m, --max=N             stop after N steps (default: unlimited)\n");
     fprintf(out, "  -r, --ram-size=N        set ram size, K/M/G suffixes allowed (default: 64K)\n");
+    fprintf(out, "  -S, --stderr=file       redirects stderr (mostly sra32emu logs) to file\n");
     fprintf(out, "  -h, --help              display this help and exit\n");
     fprintf(out, "  -V, --version           output version information and exit\n");
     exit(status);
@@ -439,11 +451,12 @@ int main(int argc, char **argv)
         {"enable-sra32ka", no_argument, NULL, 'E'},
         {"max", required_argument, NULL, 'm'},
         {"ram-size", required_argument, NULL, 'r'},
+        {"stderr", required_argument, NULL, 'S'},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}};
 
-    while ((c = getopt_long(argc, argv, "sxedEDm:r:hV", long_opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "sxedEDm:r:S:hV", long_opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -471,6 +484,9 @@ int main(int argc, char **argv)
         case 'r':
             ram_size = parse_size(optarg);
             break;
+        case 'S':
+            opts.stderr_file = optarg;
+            break;
         case 'h':
             usage(EXIT_SUCCESS);
             break;
@@ -484,6 +500,9 @@ int main(int argc, char **argv)
 
     if (optind != argc - 1)
         usage(EXIT_FAILURE);
+
+    if (opts.stderr_file)
+        redirect_stderr(opts.stderr_file);
 
     ram = calloc(1, ram_size);
     atexit(cleanup);
@@ -504,11 +523,6 @@ int main(int argc, char **argv)
     sra32_init(&cpu, bus_read, bus_write, cpu_trap, NULL);
     sra32_reset(&cpu, entry);
 
-#define STACK_TOP 0x7FFFF000
-
-    cpu.regs[REG_SP] = STACK_TOP;
-    cpu.regs[REG_FP] = STACK_TOP;
-
     if (opts.sra32ka)
     {
         sra32ka_init(&cpu);
@@ -517,10 +531,10 @@ int main(int argc, char **argv)
     steps = run(&cpu);
 
     if (opts.elf)
-        printf("halted after %llu steps\n", (unsigned long long)steps);
+        fprintf(stderr, "[sra32emu] halted after %llu steps\n", (unsigned long long)steps);
     else
-        printf("halted after %llu steps (rom: %zu bytes)\n",
-               (unsigned long long)steps, rom_size);
+        fprintf(stderr, "[sra32emu] halted after %llu steps (rom: %zu bytes)\n",
+                (unsigned long long)steps, rom_size);
     if (opts.dump_end)
         cpu_dump(&cpu);
 

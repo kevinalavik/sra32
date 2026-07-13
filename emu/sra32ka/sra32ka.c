@@ -1,8 +1,15 @@
 #include "sra32ka.h"
 #include "mmio.h"
 #include "uart.h"
+#include "../sra32.h"
 
 #include <stdio.h>
+
+void halt(cpu_t *cpu, const sra32_instr_t *in)
+{
+    (void)in;
+    cpu->halted = 1;
+}
 
 void sra32ka_init(cpu_t *cpu)
 {
@@ -18,4 +25,7 @@ void sra32ka_init(cpu_t *cpu)
         return;
     }
     fprintf(stderr, "[sra32ka] uart0 @ 0xFFFF0000\n");
+
+    /* register sra32ka specific opcodes */
+    sra32_register_op(0x20, "halt", INSTR_FORMAT_R, halt);
 }
