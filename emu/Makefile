@@ -1,7 +1,7 @@
 include ../conf.mk
 
 TARGET := $(BUILD_DIR)/emu/sra32emu
-SRC    := $(wildcard *.c)
+SRC    := $(shell find . -type f -name '*.c')
 OBJ    := $(patsubst %.c,$(BUILD_DIR)/emu/%.o,$(SRC))
 
 .PHONY: all clean
@@ -17,6 +17,7 @@ $(TARGET): $(OBJ)
 
 $(BUILD_DIR)/emu/%.o: %.c sra32.h | $(BUILD_DIR)/emu
 	@echo -e "\tCC $<"
+	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

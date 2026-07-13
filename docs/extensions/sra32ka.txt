@@ -1,0 +1,8 @@
+sra32ka extension
+--
+
+sra32ka is my extension of he base sra32 architecture.
+
+What it adds
+===
+1. MMIO devices (UART only for now)

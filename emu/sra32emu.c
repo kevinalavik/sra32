@@ -1,5 +1,7 @@
 #define SRA32_IMPLEMENTATION
 #include "sra32.h"
+#include "sra32ka/sra32ka.h"
+#include "sra32ka/mmio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +32,7 @@ static struct
     int dump_end;  // -D, dump cpu state when execution finishes
     int disasm;    // -x, disassemble every instruction during runtime
     int elf;       // -e, treat the rom as an ELF executable (experimental)
+    int sra32ka;   // -E, enables the sra32ka extension
     uint64_t max;  // -m, step limit (0 = unlimited)
 } opts;
 
@@ -67,13 +70,21 @@ static uint64_t parse_size(const char *str)
 
 static uint32_t bus_read(cpu_t *cpu, uint32_t addr, uint32_t size)
 {
-    uint32_t v = 0, i;
+    uint32_t value;
+    if (opts.sra32ka)
+    {
+        if (mmio_read(addr, size, &value) == 0)
+            return value;
+    }
+
     if (addr < ram_size && size <= ram_size - addr)
     {
-        for (i = 0; i < size; i++)
-            v |= (uint32_t)ram[addr + i] << (8 * i);
-        return v;
+        value = 0;
+        for (uint32_t i = 0; i < size; i++)
+            value |= (uint32_t)ram[addr + i] << (8 * i);
+        return value;
     }
+
     fprintf(stderr, "[bus] read fault at 0x%08X\n", addr);
     cpu->halted = 1;
     return 0;
@@ -81,21 +92,19 @@ static uint32_t bus_read(cpu_t *cpu, uint32_t addr, uint32_t size)
 
 static void bus_write(cpu_t *cpu, uint32_t addr, uint32_t value, uint32_t size)
 {
-    uint32_t i;
-
-    if (addr == 0xFFF0 && size == 1)
-    { // uart tx, byte access only (non ISA)
-        putc((int)(value & 0xFF), stdout);
-        fflush(stdout);
-        return;
+    if (opts.sra32ka)
+    {
+        if (mmio_write(addr, size, value) == 0)
+            return;
     }
 
     if (addr < ram_size && size <= ram_size - addr)
     {
-        for (i = 0; i < size; i++)
+        for (uint32_t i = 0; i < size; i++)
             ram[addr + i] = (uint8_t)(value >> (8 * i));
         return;
     }
+
     fprintf(stderr, "[bus] write fault at 0x%08X\n", addr);
     cpu->halted = 1;
 }
@@ -393,15 +402,16 @@ static void usage(int status)
     FILE *out = status == EXIT_SUCCESS ? stdout : stderr;
     fprintf(out, "Usage: %s [OPTION]... <rom>\n", PROGRAM_NAME);
     fprintf(out, "Run an SRA32 rom image.\n\n");
-    fprintf(out, "  -s, --step        interactive step mode (enter = step, q = quit)\n");
-    fprintf(out, "  -x, --disasm      disassemble every instruction during runtime\n");
-    fprintf(out, "  -e, --elf         load the rom as an ELF executable (EXPERIMENTAL)\n");
-    fprintf(out, "  -d, --dump-step   dump cpu state after every step\n");
-    fprintf(out, "  -D, --dump-end    dump cpu state when execution finishes\n");
-    fprintf(out, "  -m, --max=N       stop after N steps (default: unlimited)\n");
-    fprintf(out, "  -r, --ram-size=N  set ram size, K/M/G suffixes allowed (default: 64K)\n");
-    fprintf(out, "  -h, --help        display this help and exit\n");
-    fprintf(out, "  -V, --version     output version information and exit\n");
+    fprintf(out, "  -s, --step              interactive step mode (enter = step, q = quit)\n");
+    fprintf(out, "  -x, --disasm            disassemble every instruction during runtime\n");
+    fprintf(out, "  -e, --elf               load the rom as an ELF executable (EXPERIMENTAL)\n");
+    fprintf(out, "  -d, --dump-step         dump cpu state after every step\n");
+    fprintf(out, "  -D, --dump-end          dump cpu state when execution finishes\n");
+    fprintf(out, "  -E, --enable-sra32ka    enables the sra32ka extension\n");
+    fprintf(out, "  -m, --max=N             stop after N steps (default: unlimited)\n");
+    fprintf(out, "  -r, --ram-size=N        set ram size, K/M/G suffixes allowed (default: 64K)\n");
+    fprintf(out, "  -h, --help              display this help and exit\n");
+    fprintf(out, "  -V, --version           output version information and exit\n");
     exit(status);
 }
 
@@ -426,13 +436,14 @@ int main(int argc, char **argv)
         {"elf", no_argument, NULL, 'e'},
         {"dump-step", no_argument, NULL, 'd'},
         {"dump-end", no_argument, NULL, 'D'},
+        {"enable-sra32ka", no_argument, NULL, 'E'},
         {"max", required_argument, NULL, 'm'},
         {"ram-size", required_argument, NULL, 'r'},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}};
 
-    while ((c = getopt_long(argc, argv, "sxedDm:r:hV", long_opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "sxedEDm:r:hV", long_opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -450,6 +461,9 @@ int main(int argc, char **argv)
             break;
         case 'D':
             opts.dump_end = 1;
+            break;
+        case 'E':
+            opts.sra32ka = 1;
             break;
         case 'm':
             opts.max = strtoull(optarg, NULL, 0);
@@ -489,6 +503,16 @@ int main(int argc, char **argv)
 
     sra32_init(&cpu, bus_read, bus_write, cpu_trap, NULL);
     sra32_reset(&cpu, entry);
+
+#define STACK_TOP 0x7FFFF000
+
+    cpu.regs[REG_SP] = STACK_TOP;
+    cpu.regs[REG_FP] = STACK_TOP;
+
+    if (opts.sra32ka)
+    {
+        sra32ka_init(&cpu);
+    }
 
     steps = run(&cpu);
 
