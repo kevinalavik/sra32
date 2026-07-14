@@ -1,0 +1,158 @@
+Simple Risc Architecture 32 (SRA32)
+
+--
+
+There are 4 instruction formats:
+ - R-Form (Register format)
+ - I-Form (Immediate format)
+ - U-Form (Upper format)
+ - J-Form (Jump format)
+
+2 MSB hint at instruction format
+
+R-Form:
+[ Hint (2) | Opc (4) | RD (5) | RT (5) | RS (5) | Funct (5) | Unused (6) ]
+
+I-Form:
+[ Hint (2) | Opc (3) | RD (5) | RT (5) | Funct (5) | Imm (12) ]
+
+U-Form:
+[ Hint (2) | RD (5) | Unused (5) | Imm (20) ]
+
+J-Form:
+[ Hint (2) | Opc (2) | Funct (4) | Address (24) ]
+
+Instructions:
+
+R-Form:
+
+0 - nop
+
+1 - alu D, T, S -> D = T <> S
+  - funct 0  -> add
+  - funct 1  -> addc
+  - funct 2  -> sub
+  - funct 3  -> subc
+  - funct 4  -> mul
+  - funct 5  -> umul
+  - funct 6  -> rem
+  - funct 7  -> urem
+  - funct 8  -> div
+  - funct 9  -> udiv
+  - funct 10  -> and
+  - funct 11  -> or
+  - funct 12  -> xor
+  - funct 13  -> shl
+  - funct 14  -> shr
+  - funct 15  -> sar
+  - funct 16  -> not
+
+2 - sext D, S -> D = Sign extend Source
+  - funct 0 -> byte
+  - funct 1 -> half
+
+3 - mov Rd, Rs (, cond) -> Rd = Rs
+  - funct MSB = 1 means conditional move, the rest of funct takes condition (see branch instruction).
+
+4 - cmp Rd, Rs = Compare Rd and Rs
+
+5 - push/pop Rd
+  - funct 0 -> push -> SP - 4; Memory[SP] = Rd
+  - funct 1 -> pop -> Rd = Memory[SP]; SP + 4
+
+6 - rfl/wfl Rd
+  - funct 0 -> rfl -> Rd = Flags
+  - funct 1 -> wfl -> Flags = Rd
+
+7 - spc Rd -> PC = Rd
+8 - calr Rd -> RP = PC + 4, PC = Rd
+9 - sysc - Invoke syscall
+10 - iret - Return from interrupt
+11 - fence - Memory fence
+
+I-Form:
+
+0 - alui D, T, Imm -> D = T <> S
+  - Same as alu instruction
+
+1 - rcr/wcr Rd, Imm
+  - funct 0 -> rcr -> Rd = Cr[Imm]
+  - funct 1 -> wcr -> Cr[Imm] = Rd
+
+2 - load (lw/lh/lb) D, Imm[T] -> D = Memory[T+Imm]
+  - funct 0 -> byte
+  - funct 1 -> half
+  - funct 2 -> word
+
+3 - store (sw/sh/sb) D, Imm[T] -> Memory[T+Imm] = D
+  - funct 0 -> byte
+  - funct 1 -> half
+  - funct 2 -> word
+
+4 - load link D, Imm[T] -> D = Memory[T+Imm]
+5 - store conditional D, Imm[T] -> Memory[T+Imm] = D
+
+J-Form:
+0 - Br Imm -> PC = PC + Imm
+  - funct 0 -> branch
+  - funct 1 -> branch if equal
+  - funct 2 -> branch if not equal
+  - funct 3 -> branch if less than
+  - funct 4 -> branch if greater than
+  - funct 5 -> branch if less than or equal
+  - funct 6 -> branch if greater than or equal
+  - funct's bit 3 means signed/unsigned (1 means unsigned)
+
+1 - Call Imm -> RP = PC + 4, PC = PC + Imm
+
+Registers:
+x0, rp, sp, fp, r0 - r27
+
+ABI:
+r0-r11 = caller-saved
+r12-r27 = callee-saved
+rp = call-clobbered (return pointer)
+
+for syscalls, all it does is force CPU into kernel mode, raise an exception (software interrupt) and thats it, for memory stuff
+mmu:
+
+Uses hashed page table entry groups.
+64 Bit PTEs
+16 Kb Pages
+
+nomenclature:
+VPN -> Virtual Page Number
+PPN -> Physical Page Number
+PTag -> Process Tag
+HPT -> Hashed Page Table
+PTEB -> Page Table Entry Block
+PTE -> Page Table Entry
+
+The virtual address:
+[ VPN (18) | Offset (14) ]
+
+PTE Format:
+[ VPN Tag (18) | PPN (18) | PTag (16) | C (2) | User (1) | Execute (1) | Write (1) | Valid (1) | Unused (6)]
+
+HPT Is a a set of PTEB (Page Table Entry Block), each PTEB has 8 PTEs
+HPT Should be set-up by the bootloader before loading the kernel.
+
+VPN Gets hashed like so:
+primary = (VPN ^ (PTAG * 0x9e3779b9)) & (HPT_nPTEBs - 1)
+ ^ Using fibonacci multiplier reduces collisions.
+secondary = ~primary & (HPT_nPTEBs - 1)
+
+PTEB = HPT[primary]
+
+Look for a PTE with matching VPN_Tag
+if (PTE.VPN_Tag == VPN && PTE.PTag == PTag && PTE.Valid) done;
+
+PTEB = HPT[secondary]
+
+Look for a PTE with matching VPN_Tag
+if (PTE.VPN_Tag == VPN && PTE.PTag == PTag && PTE.Valid) done;
+
+fault;
+Unused there just means reserved for the future
+
+for interrupts for now u can just set control register 0 to the interrupt handler and set a flag of an interrupt being executed

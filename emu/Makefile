@@ -8,15 +8,15 @@ OBJ    := $(patsubst %.c,$(BUILD_DIR)/emu/%.o,$(SRC))
 all: $(TARGET)
 
 $(BUILD_DIR)/emu:
-	@echo -e "\tMKDIR $@"
+	@echo "  MKDIR $@"
 	@mkdir -p $@
 
 $(TARGET): $(OBJ)
-	@echo -e "\tLD $@"
+	@echo "  LD $@"
 	@$(CC) $(OBJ) -o $@ $(CFLAGS)
 
 $(BUILD_DIR)/emu/%.o: %.c sra32.h | $(BUILD_DIR)/emu
-	@echo -e "\tCC $<"
+	@echo "  CC $<"
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
