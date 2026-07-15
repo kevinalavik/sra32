@@ -57,7 +57,7 @@ void cpu_halt(cpu_t *cpu, const char *fmt, ...)
     vsnprintf(cpu->halt_reason, sizeof cpu->halt_reason, fmt, ap);
     va_end(ap);
 
-    log_info("halted: %s", cpu->halt_reason);
+    log_warn("halted: %s", cpu->halt_reason);
 }
 
 bool cpu_step(cpu_t *cpu)

@@ -161,6 +161,8 @@ int main(int argc, char **argv)
 
     if (opts.trace)
         log_set_level(LOG_TRACE);
+    else
+        log_set_level(LOG_WARN);
 
     isa_t isa;
     if (!isa_init(&isa))
@@ -194,8 +196,8 @@ int main(int argc, char **argv)
 
     const uint64_t retired = cpu_run(&cpu, opts.max_steps);
     if (!cpu.halted)
-        log_info("max steps reached");
-    log_info("retired %llu instruction(s), pc=0x%08x", (unsigned long long)retired, cpu.pc);
+        log_warn("max steps reached");
+    log_trace("retired %llu instruction(s), pc=0x%08x", (unsigned long long)retired, cpu.pc);
 
     if (opts.dump_regs)
         cpu_dump(&cpu, stdout);
