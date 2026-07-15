@@ -1,6 +1,7 @@
 #include <sra32/bus.h>
 #include <util/bit.h>
 #include <util/log.h>
+#include <stdio.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -65,7 +66,15 @@ static bool ram_write8(bus_t *bus, uint32_t addr, uint8_t value)
     ram_t *ram = (ram_t *)bus;
     if (!ram_check(ram, addr, 1))
         return false;
-    ram->mem[addr] = value;
+
+    /* test mmio serial */
+    if (addr == 0xFF01)
+    {
+        fputc((char)value, stdout);
+        fflush(stdout);
+    }
+    else
+        ram->mem[addr] = value;
     return true;
 }
 
