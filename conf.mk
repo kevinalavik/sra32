@@ -1,4 +1,4 @@
 BUILD_DIR := $(PWD)/build
 
-CC     := gcc
-CFLAGS := -Wall -Wextra -I.
+CC     := cc
+CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -O2 -MMD -MP
